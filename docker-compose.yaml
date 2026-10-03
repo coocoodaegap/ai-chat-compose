@@ -1,0 +1,290 @@
+x-logging: &default-logging
+  logging:
+    driver: "json-file"
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+services:
+  snowluma:
+    image: motricseven7/snowluma:latest
+    container_name: snowluma
+    restart: unless-stopped
+    cpuset: "16-31"
+    shm_size: 2gb
+    cap_add:
+      - SYS_PTRACE
+      - NET_ADMIN
+    security_opt:
+      - seccomp=unconfined     
+    env_file:
+      - .env.common
+    environment:
+      - TZ=Asia/Shanghai
+      - VNC_PASSWD=${SNOWLUMA_VNC_PASSWD:-change_me_in_env}
+      - SNOWLUMA_UID=1000
+      - SNOWLUMA_GID=1000
+      - SNOWLUMA_WEBUI_PORT=5099
+      - SNOWLUMA_WEBUI_HOST=0.0.0.0
+      - SNOWLUMA_LOG_LEVEL=info
+      - SNOWLUMA_SCREEN=1920x1080x24
+      - SNOWLUMA_HOOK_AUTOLOAD=1
+      - SNOWLUMA_QQ_FLAGS=--disable-gpu --disable-software-rasterizer --disable-gpu-compositing
+    ports:
+      - "5099:5099"
+      - "6081:6081"
+    volumes:
+      - ./snowluma/qq-gateway-data:/app/data
+      - ./snowluma/qq-client-config:/app/.config
+      - ./snowluma/qq-client-data:/app/.local/share
+    networks:
+      - protocol_net
+    hostname: ${NTQQ_HOSTNAME:-DESKTOP-OMEN9}
+    mac_address: ${NTQQ_MAC_ADDRESS:-00:e0:4c:58:12:65}
+    sysctls:
+      - net.ipv4.tcp_keepalive_time=120
+      - net.ipv4.tcp_keepalive_intvl=30
+      - net.ipv4.tcp_keepalive_probes=3
+    <<: *default-logging
+
+  astrbot:
+    build: .
+    # image: soulter/astrbot:latest
+    container_name: astrbot
+    restart: unless-stopped
+    # network_mode: host
+    cpuset: "16-31"
+    env_file:
+      - .env.common
+      - .env.proxy
+    ports:
+      - "6185:6185"
+      - "127.0.0.1:39549:39549"
+      - "127.0.0.1:39550:39550"
+      - "127.0.0.1:39551:39551"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./astrbot_data:/AstrBot/data
+      - ./public_workspace:/public_workspace
+      - ./configs/.gitconfig:/root/.gitconfig:ro
+      - ../models/modelscope_cache:/root/.cache/modelscope/hub/models/
+      - butler_ssh_volume:/root/.ssh
+    networks:
+      - protocol_net
+      - brain_net
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      snowluma:
+        condition: service_started
+      nginx:
+        condition: service_healthy
+      searxng:
+        condition: service_started
+    <<: *default-logging
+
+  nginx:
+    image: nginx:alpine
+    container_name: nginx
+    restart: unless-stopped
+    cpuset: "16-31"
+    volumes:
+      - ./configs/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - brain_net
+    depends_on:
+      llama-brain:
+        condition: service_started
+      tei-embedding:
+        condition: service_healthy
+      tei-rerank-adapter:
+        condition: service_started
+    <<: *default-logging 
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  llama-brain:
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda
+    container_name: llama-brain
+    restart: unless-stopped
+    cpuset: "0,2,4,6,8,10,12,14"
+    environment:
+      - CUDA_VISIBLE_DEVICES=0      
+      - LLAMA_ARG_HOST=0.0.0.0
+      - LLAMA_ARG_PORT=8080
+    ports:
+      - "127.0.0.1:11434:8080"
+    volumes:
+      - ../models:/models
+    networks:
+      - brain_net
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    <<: *default-logging
+    command: >
+      -m /models/GGUF_Pool/qwen2.5-coder-14b-instruct-q5_k_m.gguf
+      -c 8192
+      -ngl 12
+      --flash-attn on
+      --cache-type-k q8_0
+      --cache-type-v q8_0
+      -t 8
+      --cache-reuse 256
+      --temp 0.0
+      --repeat-penalty 1.0
+      --dry-multiplier 0
+# =====================================================================
+#   A. Coder (生产力特化：绝对确定性、零幻觉、工具调用大师)
+# =====================================================================
+#     -m /models/GGUF_Pool/qwen2.5-coder-14b-instruct-q5_k_m.gguf
+#     -c 8192
+#     -ngl 12
+#     --flash-attn on
+#     --cache-type-k q8_0
+#     --cache-type-v q8_0
+#     -t 8
+#     --cache-reuse 256
+#     --temp 0.0
+#     --repeat-penalty 1.0
+#     --dry-multiplier 0
+# =====================================================================
+#   B. Offline-Chat (离线备用聊天：高灵感、文笔细腻、防车轱辘话)
+# =====================================================================
+#     -m /models/GGUF_Pool/qwen2.5-14b-kunou-q5_k_m.gguf
+#     -c 8192
+#     -ngl 12
+#     --flash-attn on
+#     --cache-type-k q8_0
+#     --cache-type-v q8_0
+#     -t 8
+#     --cache-reuse 256
+#     --temp 1.1
+#     --min-p 0.02
+#     --repeat-penalty 1.08
+#     --dry-multiplier 0.3
+#     --dry-base 1.75
+#     --dry-allowed-length 2
+
+  tei-embedding:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9
+    container_name: tei-embedding
+    restart: unless-stopped
+    cpuset: "1,3,5,7"
+    env_file:
+      - .env.proxy
+    environment:
+      - OMP_NUM_THREADS=4
+      - MKL_NUM_THREADS=4
+    volumes:
+      - ../models/cache:/data
+    networks:
+      - brain_net
+    <<: *default-logging
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:80/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
+    command: >
+      --model-id BAAI/bge-m3
+      --port 80 
+      --pooling cls
+      --max-concurrent-requests 4
+      --max-batch-tokens 2048
+      --max-client-batch-size 32
+
+  tei-rerank:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9
+    container_name: tei-rerank
+    restart: unless-stopped
+    cpuset: "9,11,13,15"
+    env_file:
+      - .env.proxy
+    environment:
+      - OMP_NUM_THREADS=4
+      - MKL_NUM_THREADS=4
+    volumes:
+      - ../models/cache:/data
+    networks:
+      - brain_net
+    <<: *default-logging
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:80/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
+    command: >
+      --model-id BAAI/bge-reranker-base
+      --port 80 
+      --max-concurrent-requests 128
+      --max-batch-tokens 16384
+      --max-client-batch-size 64
+      --auto-truncate
+
+  tei-rerank-adapter:
+    image: python:3.11-slim
+    container_name: tei-rerank-adapter
+    restart: unless-stopped
+    cpuset: "16-31"
+    networks:
+      - brain_net
+    working_dir: /app
+    volumes:
+      - ./scripts/tei_rerank_adapter.py:/app/tei_rerank_adapter.py:ro
+    depends_on:
+      tei-rerank:
+        condition: service_healthy
+    <<: *default-logging
+    command: python tei_rerank_adapter.py
+
+  searxng:
+    image: searxng/searxng:latest
+    container_name: searxng
+    restart: unless-stopped
+    cpuset: "16-31"
+    env_file:
+      - .env.common
+      - .env.proxy
+    environment:
+      - SEARXNG_BASE_URL=http://localhost:8080/
+    volumes:
+      - ./searxng:/etc/searxng:rw
+    networks:
+      - brain_net
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    <<: *default-logging
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python3",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=3)"
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+networks:
+  protocol_net:
+    name: protocol_net
+    driver: bridge
+  brain_net:
+    name: brain_net
+    driver: bridge
+
+volumes:
+  butler_ssh_volume:
+    driver: local

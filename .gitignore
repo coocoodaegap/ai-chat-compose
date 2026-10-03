@@ -1,0 +1,10 @@
+# Runtime / data directories
+/astrbot_data/
+/public_workspace/
+/snowluma/
+
+# Ignore any .gitconfig file at any depth
+.gitconfig
+
+# Local environment
+/.env
