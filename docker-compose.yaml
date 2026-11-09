@@ -49,7 +49,6 @@ services:
 
   astrbot:
     build: .
-    # image: soulter/astrbot:latest
     container_name: astrbot
     restart: unless-stopped
     # network_mode: host
@@ -83,6 +82,33 @@ services:
         condition: service_started
     <<: *default-logging
 
+  astrbot-dev:
+    image: soulter/astrbot:latest
+    container_name: astrbot-dev
+    restart: unless-stopped
+    cpuset: "16-31"
+    env_file:
+      - .env.common
+      - .env.proxy
+    ports:
+      - "16185:6185"
+    volumes:
+      - ./astrbot_dev_data:/AstrBot/data
+      - ../models/modelscope_cache:/root/.cache/modelscope/hub/models/
+    networks:
+      - protocol_net
+      - brain_net
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      snowluma:
+        condition: service_started
+      nginx:
+        condition: service_healthy
+      searxng:
+        condition: service_started
+    <<: *default-logging
+
   nginx:
     image: nginx:alpine
     container_name: nginx
@@ -93,8 +119,6 @@ services:
     networks:
       - brain_net
     depends_on:
-      llama-brain:
-        condition: service_started
       tei-embedding:
         condition: service_healthy
       tei-rerank-adapter:
@@ -106,72 +130,91 @@ services:
       timeout: 5s
       retries: 3
 
-  llama-brain:
-    image: ghcr.io/ggml-org/llama.cpp:server-cuda
-    container_name: llama-brain
-    restart: unless-stopped
-    cpuset: "0,2,4,6,8,10,12,14"
-    environment:
-      - CUDA_VISIBLE_DEVICES=0      
-      - LLAMA_ARG_HOST=0.0.0.0
-      - LLAMA_ARG_PORT=8080
-    ports:
-      - "127.0.0.1:11434:8080"
-    volumes:
-      - ../models:/models
-    networks:
-      - brain_net
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
-    <<: *default-logging
-    command: >
-      -m /models/GGUF_Pool/qwen2.5-coder-14b-instruct-q5_k_m.gguf
-      -c 8192
-      -ngl 12
-      --flash-attn on
-      --cache-type-k q8_0
-      --cache-type-v q8_0
-      -t 8
-      --cache-reuse 256
-      --temp 0.0
-      --repeat-penalty 1.0
-      --dry-multiplier 0
-# =====================================================================
-#   A. Coder (生产力特化：绝对确定性、零幻觉、工具调用大师)
-# =====================================================================
-#     -m /models/GGUF_Pool/qwen2.5-coder-14b-instruct-q5_k_m.gguf
-#     -c 8192
-#     -ngl 12
-#     --flash-attn on
-#     --cache-type-k q8_0
-#     --cache-type-v q8_0
-#     -t 8
-#     --cache-reuse 256
-#     --temp 0.0
-#     --repeat-penalty 1.0
-#     --dry-multiplier 0
-# =====================================================================
-#   B. Offline-Chat (离线备用聊天：高灵感、文笔细腻、防车轱辘话)
-# =====================================================================
-#     -m /models/GGUF_Pool/qwen2.5-14b-kunou-q5_k_m.gguf
-#     -c 8192
-#     -ngl 12
-#     --flash-attn on
-#     --cache-type-k q8_0
-#     --cache-type-v q8_0
-#     -t 8
-#     --cache-reuse 256
-#     --temp 1.1
-#     --min-p 0.02
-#     --repeat-penalty 1.08
-#     --dry-multiplier 0.3
-#     --dry-base 1.75
-#     --dry-allowed-length 2
+  # llama-brain:
+  #   image: ghcr.io/ggml-org/llama.cpp:server
+  #   container_name: llama-brain
+  #   restart: unless-stopped
+  #   cpuset: "0,2,4,6,8,10,12,14"
+  #   environment:
+  #     - LLAMA_ARG_HOST=0.0.0.0
+  #     - LLAMA_ARG_PORT=8080
+  #   ports:
+  #     - "127.0.0.1:11434:8080"
+  #   volumes:
+  #     - ../models:/models
+  #   networks:
+  #     - brain_net
+  #   <<: *default-logging
+  #   command: >
+  #     -m /models/GGUF_Pool/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf
+  #     -c 16384
+  #     -ngl 0
+  #     -t 6
+  #     -b 2048
+  #     -ub 1024
+  #     --parallel 1
+  #     --cache-type-k q8_0
+  #     --cache-type-v q8_0
+  #     --cache-reuse 256
+  #     --temp 0.0
+  #     --repeat-penalty 1.0
+  #     --jinja
+
+  # llama-brain:
+  #   image: ghcr.io/ggml-org/llama.cpp:server-cuda
+  #   container_name: llama-brain
+  #   restart: unless-stopped
+  #   cpuset: "0,2,4,6,8,10,12,14"
+  #   environment:
+  #     - CUDA_VISIBLE_DEVICES=0      
+  #     - LLAMA_ARG_HOST=0.0.0.0
+  #     - LLAMA_ARG_PORT=8080
+  #   ports:
+  #     - "127.0.0.1:11434:8080"
+  #   volumes:
+  #     - ../models:/models
+  #   networks:
+  #     - brain_net
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: 1
+  #             capabilities: [gpu]
+  #   <<: *default-logging
+  #   command: >
+  # =====================================================================
+  #   A. Coder (生产力特化：绝对确定性、零幻觉、工具调用大师)
+  # =====================================================================
+  #     -m /models/GGUF_Pool/qwen2.5-coder-14b-instruct-q5_k_m.gguf
+  #     -c 8192
+  #     -ngl 12
+  #     --flash-attn on
+  #     --cache-type-k q8_0
+  #     --cache-type-v q8_0
+  #     -t 8
+  #     --cache-reuse 256
+  #     --temp 0.0
+  #     --repeat-penalty 1.0
+  #     --dry-multiplier 0
+  # =====================================================================
+  #   B. Offline-Chat (离线备用聊天：高灵感、文笔细腻、防车轱辘话)
+  # =====================================================================
+  #     -m /models/GGUF_Pool/qwen2.5-14b-kunou-q5_k_m.gguf
+  #     -c 8192
+  #     -ngl 12
+  #     --flash-attn on
+  #     --cache-type-k q8_0
+  #     --cache-type-v q8_0
+  #     -t 8
+  #     --cache-reuse 256
+  #     --temp 1.1
+  #     --min-p 0.02
+  #     --repeat-penalty 1.08
+  #     --dry-multiplier 0.3
+  #     --dry-base 1.75
+  #     --dry-allowed-length 2
 
   tei-embedding:
     image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9

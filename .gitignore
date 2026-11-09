@@ -1,5 +1,6 @@
 # Runtime / data directories
 /astrbot_data/
+/astrbot_dev_data/
 /public_workspace/
 /snowluma/
 
