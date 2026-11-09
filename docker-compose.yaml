@@ -80,6 +80,8 @@ services:
         condition: service_healthy
       searxng:
         condition: service_started
+      # gsv:
+      #   condition: service_healthy
     <<: *default-logging
 
   astrbot-dev:
@@ -215,6 +217,41 @@ services:
   #     --dry-multiplier 0.3
   #     --dry-base 1.75
   #     --dry-allowed-length 2
+
+  # gsv:
+  #   image: xxxxrt666/gpt-sovits:latest-cu126-lite
+  #   container_name: gsv
+  #   restart: unless-stopped
+  #   volumes:
+  #     - ../models/gsv:/models:ro
+  #     - ../gsv-output:/workspace/output
+  #   environment:
+  #     - is_half=true
+  #   shm_size: "16g"
+  #   networks:
+  #     - brain_net
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: 1
+  #             capabilities: [gpu]
+  #   <<: *default-logging
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "python -c \"import socket,sys; sys.exit(0 if socket.create_connection(('127.0.0.1',9880),3) else 1)\""]
+  #     interval: 15s
+  #     timeout: 5s
+  #     retries: 20
+  #     start_period: 240s
+  #   command: >
+  #     /bin/bash -c "
+  #     rm -rf /workspace/GPT-SoVITS/GPT_SoVITS/pretrained_models &&
+  #     rm -rf /workspace/GPT-SoVITS/GPT_SoVITS/text/G2PWModel &&
+  #     ln -s /workspace/models/pretrained_models /workspace/GPT-SoVITS/GPT_SoVITS/pretrained_models &&
+  #     ln -s /workspace/models/G2PWModel /workspace/GPT-SoVITS/GPT_SoVITS/text/G2PWModel &&
+  #     sed -i 's/sample_steps: int = 32/sample_steps: int = 8/g' /workspace/GPT-SoVITS/api_v2.py &&
+  #     cd /workspace/GPT-SoVITS && python api_v2.py -a 0.0.0.0 -p 9880"
 
   tei-embedding:
     image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9
